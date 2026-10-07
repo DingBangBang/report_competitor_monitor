@@ -1,0 +1,44 @@
+services:
+  # --- Data report pipeline (daily / weekly / monthly) ---------------------
+  report-pipeline:
+    build: .
+    image: report-competitor-monitor:latest
+    container_name: report_pipeline
+    env_file:
+      - environment.env
+    volumes:
+      - ./reports:/app/reports
+      - ./data:/app/data
+      - ./credentials:/app/credentials
+    # `auto` runs daily every day, weekly on Mondays, monthly on the 1st.
+    command: ["report", "--type", "auto"]
+    restart: "no"
+
+  # --- Competitor monitoring pipeline (daily) ------------------------------
+  competitor-monitor:
+    build: .
+    image: report-competitor-monitor:latest
+    container_name: competitor_monitor
+    env_file:
+      - environment.env
+    volumes:
+      - ./reports:/app/reports
+      - ./data:/app/data
+      - ./credentials:/app/credentials
+    command: ["competitor"]
+    restart: "no"
+
+  # --- First-run bootstrap (generate all three reports + competitor) --------
+  bootstrap:
+    profiles: ["bootstrap"]
+    build: .
+    image: report-competitor-monitor:latest
+    container_name: report_bootstrap
+    env_file:
+      - environment.env
+    volumes:
+      - ./reports:/app/reports
+      - ./data:/app/data
+      - ./credentials:/app/credentials
+    command: ["all"]
+    restart: "no"
