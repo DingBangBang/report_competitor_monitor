@@ -9,14 +9,14 @@ event carries its source URL and timestamp.
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from src.analyzer_labels import GROUP_ORDER, LEVEL_LABELS
+from src.analyzer_labels import CATEGORY_LABELS, GROUP_ORDER, LEVEL_LABELS
 from src.config import Config
 from src.database import Database
 from src.llm_client import LLMClient
@@ -54,6 +54,7 @@ class CompetitorReportGenerator:
             groups[ev.get("impact_level") or "monitor"].append(ev)
 
         narrative = self._generate_narrative(events, groups)
+        keywords = self._extract_keywords(events)
 
         context = {
             "title": "竞品动态监控报告",
@@ -61,6 +62,7 @@ class CompetitorReportGenerator:
             "period_end": today,
             "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
             "total_events": len(events),
+            "keywords": keywords,
             "top_three": narrative.get("top_three", []),
             "groups": {lvl: groups.get(lvl, []) for lvl in GROUP_ORDER},
             "level_labels": LEVEL_LABELS,
@@ -80,6 +82,34 @@ class CompetitorReportGenerator:
         context["filename"] = filename
         context["narrative"] = narrative
         return context
+
+    # -- keywords ------------------------------------------------------------
+    @staticmethod
+    def _extract_keywords(events: list[dict[str, Any]], top_n: int = 12) -> dict[str, Any]:
+        """Summarise the reporting window into a set of headline keywords."""
+        symbol_counts: Counter = Counter()
+        category_counts: Counter = Counter()
+        exchange_counts: Counter = Counter()
+
+        for ev in events:
+            for sym in ev.get("symbols") or []:
+                if 2 <= len(sym) <= 10:
+                    symbol_counts[sym] += 1
+            category_counts[ev.get("category", "activity")] += 1
+            exchange_counts[ev.get("exchange", "Unknown")] += 1
+
+        top_symbols = [s for s, _ in symbol_counts.most_common(top_n)]
+        top_categories = [
+            {"key": c, "label": CATEGORY_LABELS.get(c, c), "count": n}
+            for c, n in category_counts.most_common()
+        ]
+        top_exchanges = [{"name": e, "count": n} for e, n in exchange_counts.most_common()]
+
+        return {
+            "symbols": top_symbols,
+            "categories": top_categories,
+            "exchanges": top_exchanges,
+        }
 
     # -- narrative -----------------------------------------------------------
     def _generate_narrative(self, events, groups) -> dict[str, Any]:

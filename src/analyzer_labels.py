@@ -13,3 +13,10 @@ LEVEL_LABELS = {
 GROUP_ORDER = ["immediate", "confirm", "management_align", "monitor"]
 
 IMPACT_LEVELS = list(GROUP_ORDER)
+
+CATEGORY_LABELS = {
+    "new_listing": "上币",
+    "delisting": "下架",
+    "fee_change": "费率调整",
+    "activity": "活动",
+}

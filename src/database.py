@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS weekly_metrics (
     report_type   TEXT    NOT NULL,          -- daily|weekly|monthly
     metric_key    TEXT    NOT NULL,          -- machine key, e.g. contract_volume
     metric_label  TEXT    NOT NULL,          -- human label for cards
+    dimension     TEXT,                      -- trading|funds|users|market
     metric_value  REAL    NOT NULL,
     metric_unit   TEXT,                      -- $, %, count, ...
     change_pct    REAL,                      -- vs previous period
@@ -34,6 +35,15 @@ CREATE TABLE IF NOT EXISTS weekly_metrics (
     created_at    TEXT    NOT NULL,
     UNIQUE(report_type, metric_key, period_end)
 );
+
+CREATE TABLE IF NOT EXISTS report_extras (
+    report_type  TEXT NOT NULL,
+    period_end   TEXT NOT NULL,
+    key          TEXT NOT NULL,              -- e.g. top_gainers, top_losers
+    value        TEXT,                       -- JSON payload
+    PRIMARY KEY (report_type, period_end, key)
+);
+
 
 CREATE TABLE IF NOT EXISTS competitor_events (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -98,6 +108,36 @@ class Database:
     def _init_schema(self) -> None:
         with self.connect() as conn:
             conn.executescript(SCHEMA)
+            # Lightweight migration for pre-existing databases.
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(weekly_metrics)")}
+            if "dimension" not in cols:
+                conn.execute("ALTER TABLE weekly_metrics ADD COLUMN dimension TEXT")
+
+    # -- extras (gainers/losers etc.) ---------------------------------------
+    def set_extra(self, report_type: str, period_end: str, key: str, value: Any) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO report_extras (report_type, period_end, key, value)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(report_type, period_end, key) DO UPDATE SET value=excluded.value
+                """,
+                (report_type, period_end, key, json.dumps(value, ensure_ascii=False)),
+            )
+
+    def get_extras(self, report_type: str, period_end: str) -> dict[str, Any]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT key, value FROM report_extras WHERE report_type = ? AND period_end = ?",
+                (report_type, period_end),
+            ).fetchall()
+        out: dict[str, Any] = {}
+        for r in rows:
+            try:
+                out[r["key"]] = json.loads(r["value"])
+            except (json.JSONDecodeError, TypeError):
+                out[r["key"]] = r["value"]
+        return out
 
     # -- weekly metrics ------------------------------------------------------
     def upsert_metric(
@@ -111,24 +151,26 @@ class Database:
         period_start: str,
         period_end: str,
         source: str = "",
+        dimension: str = "other",
     ) -> None:
         with self.connect() as conn:
             conn.execute(
                 """
                 INSERT INTO weekly_metrics
-                    (report_type, metric_key, metric_label, metric_value,
+                    (report_type, metric_key, metric_label, dimension, metric_value,
                      metric_unit, change_pct, period_start, period_end, source, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(report_type, metric_key, period_end) DO UPDATE SET
                     metric_value=excluded.metric_value,
                     change_pct=excluded.change_pct,
                     metric_label=excluded.metric_label,
+                    dimension=excluded.dimension,
                     metric_unit=excluded.metric_unit,
                     source=excluded.source,
                     created_at=excluded.created_at
                 """,
                 (
-                    report_type, metric_key, metric_label, metric_value,
+                    report_type, metric_key, metric_label, dimension, metric_value,
                     metric_unit, change_pct, period_start, period_end, source, _now(),
                 ),
             )

@@ -49,7 +49,13 @@ CATEGORY_RULES: list[tuple[str, str]] = [
     ("taker", "fee_change"),
 ]
 
-SYMBOL_RE = re.compile(r"\b([A-Z0-9]{2,10})(?:USDT|USDC|PERP|/USDT)?\b")
+SYMBOL_RE = re.compile(r"\b([A-Z]{2,10})\b")
+
+# Uppercase tokens that are not crypto tickers.
+SYMBOL_STOPWORDS = {
+    "USD", "USDT", "USDC", "USDD", "BUSD", "PERP", "API", "VIP", "OKX", "CEX", "DEX",
+    "NEW", "FIX", "PRO", "AND", "THE", "FOR", "ON", "IN", "OF", "TO", "APP", "ETF",
+}
 
 
 class CompetitorFetcher:
@@ -128,9 +134,8 @@ class CompetitorFetcher:
 
     @staticmethod
     def _extract_symbols(title: str) -> list[str]:
-        stop = {"WILL", "LIST", "NEW", "PERP", "USDT", "USDC", "API", "FOR", "AND", "THE", "APP"}
         found = {m.group(1) for m in SYMBOL_RE.finditer(title)}
-        return sorted(s for s in found if s not in stop and len(s) >= 2)[:10]
+        return sorted(s for s in found if s not in SYMBOL_STOPWORDS)[:10]
 
     @staticmethod
     def _normalise_time(value: Any) -> str:

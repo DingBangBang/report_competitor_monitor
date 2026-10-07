@@ -62,6 +62,10 @@ class Config:
     LARK_ENABLED: bool = _bool(os.getenv("LARK_ENABLED"), True)
 
     # --- Gmail --------------------------------------------------------------
+    GMAIL_CLIENT_ID: str = os.getenv("GMAIL_CLIENT_ID", "")
+    GMAIL_CLIENT_SECRET: str = os.getenv("GMAIL_CLIENT_SECRET", "")
+    GMAIL_REFRESH_TOKEN: str = os.getenv("GMAIL_REFRESH_TOKEN", "")
+    GMAIL_TOKEN_URI: str = os.getenv("GMAIL_OAUTH_TOKEN_URL", "https://oauth2.googleapis.com/token")
     GMAIL_CLIENT_SECRET_FILE: str = os.getenv(
         "GMAIL_CLIENT_SECRET_FILE", "credentials/client_secret.json"
     )
@@ -69,6 +73,12 @@ class Config:
     GMAIL_SENDER: str = os.getenv("GMAIL_SENDER", "")
     GMAIL_RECIPIENTS: str = os.getenv("GMAIL_RECIPIENTS", "dingbangchu@gmail.com")
     GMAIL_ENABLED: bool = _bool(os.getenv("GMAIL_ENABLED"), True)
+    # Whether to open the Google consent page in the browser when authorising.
+    GMAIL_INTERACTIVE_LOGIN: bool = _bool(os.getenv("GMAIL_INTERACTIVE_LOGIN"), True)
+
+    # --- Network proxy ------------------------------------------------------
+    NET_PROXY: str = os.getenv("NET_PROXY", "") or os.getenv("HTTPS_PROXY", "")
+
 
     # --- Reports / DB -------------------------------------------------------
     REPORTS_DIR: Path = Path(os.getenv("REPORTS_DIR", str(REPORTS_DIR)))
@@ -87,3 +97,9 @@ class Config:
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 CREDENTIALS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Apply the outbound proxy (if configured) so that requests-based clients —
+# including the Google OAuth token exchange and Gmail API — route through it.
+if Config.NET_PROXY:
+    for _var in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+        os.environ.setdefault(_var, Config.NET_PROXY)
