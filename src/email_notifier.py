@@ -139,13 +139,6 @@ class EmailNotifier:
                 logger.warning("Token refresh failed: %s", exc)
                 creds = None
 
-        if not creds and Config.GMAIL_INTERACTIVE_LOGIN:
-            try:
-                creds = self._interactive_login(secret_path, token_path)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Interactive login unavailable: %s", exc)
-                creds = None
-
         if not creds:
             creds = self._from_refresh_token()
             if creds:
@@ -156,6 +149,15 @@ class EmailNotifier:
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Refresh-token flow failed: %s", exc)
                     creds = None
+
+        # Interactive browser login only when nothing else is available, so that
+        # scheduled runs (with a stored refresh token) never block on a browser.
+        if not creds and Config.GMAIL_INTERACTIVE_LOGIN:
+            try:
+                creds = self._interactive_login(secret_path, token_path)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Interactive login unavailable: %s", exc)
+                creds = None
 
         if not creds:
             raise FileNotFoundError(
