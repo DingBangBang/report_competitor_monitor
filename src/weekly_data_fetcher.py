@@ -52,7 +52,7 @@ class WeeklyDataFetcher:
 
         stored: list[dict[str, Any]] = []
         for m in metrics:
-            change = self._compute_change(m["metric_key"], m["metric_value"], report_type)
+            change = self._compute_change(m["metric_key"], m["metric_value"], report_type, period_end)
             self.db.upsert_metric(
                 report_type=report_type,
                 metric_key=m["metric_key"],
@@ -259,8 +259,8 @@ class WeeklyDataFetcher:
         return round(base + rnd.uniform(-spread, spread), 2)
 
     # -- change vs previous stored period -----------------------------------
-    def _compute_change(self, metric_key: str, value: float, report_type: str) -> float | None:
-        prev = self._previous_value(metric_key, report_type)
+    def _compute_change(self, metric_key: str, value: float, report_type: str, period_end: str) -> float | None:
+        prev = self._previous_value(metric_key, report_type, period_end)
         if prev in (None, 0):
             # First observation for this cadence: no real prior period exists, so
             # model a plausible change that is stable per (metric, cadence).
@@ -270,11 +270,13 @@ class WeeklyDataFetcher:
         except ZeroDivisionError:
             return None
 
-    def _previous_value(self, metric_key: str, report_type: str) -> float | None:
+    def _previous_value(self, metric_key: str, report_type: str, before_period_end: str) -> float | None:
+        """Latest stored value for an *earlier* period (never the current one)."""
         with self.db.connect() as conn:
             row = conn.execute(
-                "SELECT metric_value FROM weekly_metrics WHERE report_type = ? AND metric_key = ? "
+                "SELECT metric_value FROM weekly_metrics "
+                "WHERE report_type = ? AND metric_key = ? AND period_end < ? "
                 "ORDER BY period_end DESC LIMIT 1",
-                (report_type, metric_key),
+                (report_type, metric_key, before_period_end),
             ).fetchone()
         return row["metric_value"] if row else None

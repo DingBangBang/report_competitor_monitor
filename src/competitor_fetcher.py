@@ -55,6 +55,7 @@ SYMBOL_RE = re.compile(r"\b([A-Z]{2,10})\b")
 SYMBOL_STOPWORDS = {
     "USD", "USDT", "USDC", "USDD", "BUSD", "PERP", "API", "VIP", "OKX", "CEX", "DEX",
     "NEW", "FIX", "PRO", "AND", "THE", "FOR", "ON", "IN", "OF", "TO", "APP", "ETF",
+    "UTC", "GMT", "APR", "TBA", "KYC", "FAQ", "PNG", "URL", "IDO", "IEO", "ROI",
 }
 
 
