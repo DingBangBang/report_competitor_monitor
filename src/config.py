@@ -98,8 +98,7 @@ REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 CREDENTIALS_DIR.mkdir(parents=True, exist_ok=True)
 
-# Apply the outbound proxy (if configured) so that requests-based clients —
-# including the Google OAuth token exchange and Gmail API — route through it.
-if Config.NET_PROXY:
-    for _var in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
-        os.environ.setdefault(_var, Config.NET_PROXY)
+# NOTE: NET_PROXY is intentionally *not* applied to the whole process, because
+# Binance's public API is reachable directly here and routing it through the
+# proxy breaks the TLS handshake. The proxy is used only where explicitly
+# required (see email_notifier / llm_client if you need to force it).

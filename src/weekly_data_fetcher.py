@@ -46,10 +46,9 @@ class WeeklyDataFetcher:
     # -- public API ----------------------------------------------------------
     def fetch_and_store(self, report_type: str = "weekly") -> list[dict[str, Any]]:
         report_type = report_type.lower()
-        days = WINDOW_DAYS.get(report_type, 7)
-        period_end, period_start = self._period_range(days)
+        period_start, period_end = self._period_range(report_type)
 
-        metrics, extras = self._collect(report_type, period_start)
+        metrics, extras = self._collect(report_type, period_start, period_end)
 
         stored: list[dict[str, Any]] = []
         for m in metrics:
@@ -82,10 +81,33 @@ class WeeklyDataFetcher:
 
     # -- helpers -------------------------------------------------------------
     @staticmethod
-    def _period_range(days: int) -> tuple[str, str]:
+    def _period_range(report_type: str) -> tuple[str, str]:
+        """Calendar-aligned, *completed* reporting windows.
+
+        daily   -> yesterday
+        weekly  -> the most recently completed Monday..Sunday week
+        monthly -> the previous calendar month
+
+        Aligning to completed periods means the Monday run reports "last week"
+        and the 1st-of-month run reports "last month", exactly as scheduled.
+        """
         today = datetime.now(timezone.utc).date()
-        start = today - timedelta(days=days)
-        return today.isoformat(), start.isoformat()
+
+        if report_type == "daily":
+            end = today - timedelta(days=1)
+            return end.isoformat(), end.isoformat()
+
+        if report_type == "monthly":
+            first_this_month = today.replace(day=1)
+            end = first_this_month - timedelta(days=1)
+            start = end.replace(day=1)
+            return start.isoformat(), end.isoformat()
+
+        # weekly (default): the last completed Mon..Sun block.
+        days_since_monday = today.weekday()  # Monday == 0
+        end = today - timedelta(days=days_since_monday + 1)  # last Sunday
+        start = end - timedelta(days=6)                      # that week's Monday
+        return start.isoformat(), end.isoformat()
 
     @staticmethod
     def _get(url: str, params: dict[str, Any] | None = None) -> Any | None:
@@ -116,12 +138,12 @@ class WeeklyDataFetcher:
         }
 
     # -- collection ----------------------------------------------------------
-    def _collect(self, report_type: str, period_start: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    def _collect(self, report_type: str, period_start: str, period_end: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         metrics: list[dict[str, Any]] = []
         extras: dict[str, Any] = {}
         metrics += self._market_metrics(extras)
         metrics += self._trading_metrics()
-        metrics += self._simulated_internal(report_type, period_start)
+        metrics += self._simulated_internal(report_type, period_start, period_end)
         return metrics, extras
 
     # -- market dimension (live) --------------------------------------------
@@ -200,16 +222,17 @@ class WeeklyDataFetcher:
 
         metrics.append(self._m("spot_volume", "现货交易量", round(spot_vol / 1e8, 1) or self._seeded("spot_volume", 400, 120), "$亿", "trading", "Binance Spot API"))
         metrics.append(self._m("contract_volume", "合约交易量", round(contract_vol / 1e8, 1) or self._seeded("contract_volume", 900, 300), "$亿", "trading", "Binance Futures API"))
-        metrics.append(self._m("active_pairs", "活跃交易对", float(active_pairs) or self._seeded("active_pairs", 400, 40), "个", "trading", "Binance ExchangeInfo"))
-        metrics.append(self._m("trade_count", "成交笔数", self._seeded("trade_count", 8500, 2500), "万笔", "trading", "internal-sim"))
-        avg_size = round((spot_vol / 1e6) / max(self._seeded("trade_count", 8500, 2500), 1) * 100, 1) if spot_vol else self._seeded("avg_order", 1200, 400)
+        metrics.append(self._m("active_pairs", "活跃交易对", float(active_pairs) or float(round(self._seeded("active_pairs", 400, 40))), "个", "trading", "Binance ExchangeInfo"))
+        trade_count_wan = round(self._seeded("trade_count", 8500, 2500))
+        metrics.append(self._m("trade_count", "成交笔数", float(trade_count_wan), "万笔", "trading", "internal-sim"))
+        avg_size = round((spot_vol / 1e8) / max(trade_count_wan, 1) * 100, 1) if spot_vol else self._seeded("avg_order", 1200, 400)
         metrics.append(self._m("avg_order_size", "平均单笔金额", avg_size, "$", "trading", "derived"))
         return metrics
 
     # -- funds + users dimensions (modelled) --------------------------------
-    def _simulated_internal(self, report_type: str, period_start: str) -> list[dict[str, Any]]:
+    def _simulated_internal(self, report_type: str, period_start: str, period_end: str) -> list[dict[str, Any]]:
         scale = WINDOW_DAYS.get(report_type, 7) / 7.0
-        salt = f"{report_type}:{period_start}"
+        salt = f"{report_type}:{period_start}:{period_end}"
         s = self._seeded
 
         funds = [
@@ -239,7 +262,9 @@ class WeeklyDataFetcher:
     def _compute_change(self, metric_key: str, value: float, report_type: str) -> float | None:
         prev = self._previous_value(metric_key, report_type)
         if prev in (None, 0):
-            return round(self._seeded(f"{metric_key}:chg", 0, 12), 1)
+            # First observation for this cadence: no real prior period exists, so
+            # model a plausible change that is stable per (metric, cadence).
+            return round(self._seeded(f"{metric_key}:{report_type}:chg", 0, 12), 1)
         try:
             return round((value - prev) / abs(prev) * 100, 1)
         except ZeroDivisionError:

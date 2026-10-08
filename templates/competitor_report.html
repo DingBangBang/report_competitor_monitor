@@ -108,15 +108,15 @@
   </section>
 
   <section>
-    <h2>数据来源明细</h2>
+    <h2>数据来源明细（URL 与时间戳）</h2>
     <div class="panel">
       <table>
-        <thead><tr><th>交易所</th><th>标题</th><th>发布时间</th><th>来源 URL</th></tr></thead>
+        <thead><tr><th>交易所</th><th>类型</th><th>发布时间</th><th>来源 URL</th></tr></thead>
         <tbody>
         {% for ev in all_sources %}
           <tr>
             <td>{{ ev.exchange }}</td>
-            <td>{{ ev.title }}</td>
+            <td>{{ ev.category }}</td>
             <td>{{ ev.published_at }}</td>
             <td>{% if ev.url %}<a href="{{ ev.url }}" target="_blank">{{ ev.url }}</a>{% endif %}</td>
           </tr>

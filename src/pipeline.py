@@ -274,10 +274,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "report":
         if args.type == "all" or args.bootstrap:
             types, send_all = ["daily", "weekly", "monthly"], True
+            logger.info("Manual full run: generating daily + weekly + monthly (forced).")
         elif args.type == "auto":
             types, send_all = due_report_types(), False
+            logger.info("Schedule-driven run: reports due today = %s", types)
         else:
-            types, send_all = [args.type], False
+            # Explicit --type is a manual trigger: always generate and always push.
+            types, send_all = [args.type], True
+            logger.info("Manual trigger: generating '%s' report (forced).", args.type)
         result = run_report_pipeline(types, send_all_email=send_all)
         logger.info("Report pipeline finished: %s", result)
         return 0 if result["status"] == "SUCCESS" else 1

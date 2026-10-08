@@ -108,19 +108,47 @@ open reports/weekly_report_*.html
 
 | Command | What it does |
 |---|---|
-| `python -m src.pipeline report --type auto` | daily always; weekly on Mon; monthly on 1st |
-| `python -m src.pipeline report --type all` | force daily + weekly + monthly |
-| `python -m src.pipeline report --type weekly` | just the weekly report |
+| `python -m src.pipeline report --type auto` | schedule-driven: daily always; weekly on Mon; monthly on 1st |
+| `python -m src.pipeline report --type daily` | **manual trigger**: force just the daily report |
+| `python -m src.pipeline report --type weekly` | **manual trigger**: force just the weekly report |
+| `python -m src.pipeline report --type monthly` | **manual trigger**: force just the monthly report |
+| `python -m src.pipeline report --type all` | **manual trigger**: force daily + weekly + monthly |
+| `python -m src.pipeline all` | bootstrap: all three reports + competitor |
 | `python -m src.pipeline competitor` | fetch → classify → report (daily) |
-| `python -m src.pipeline all` | bootstrap everything |
-| `python scripts/run_weekly.py` | wrapper for the report pipeline |
+| `python scripts/run_weekly.py --type weekly` | wrapper (passes `--type` through) |
 | `python scripts/run_competitor.py` | wrapper for the competitor pipeline |
 | `python scripts/run_all.py` | wrapper for the bootstrap |
 
-**Push cadence follows the report name**: `daily` pushes every day, `weekly`
-pushes on Mondays, `monthly` on the 1st. The competitor report pushes **daily**.
-Emails follow the same cadence; the competitor email is always sent separately,
-never bundled with the data report emails.
+### 3.1 Frequency (which report goes out when)
+
+| Report | Schedule | Reporting window |
+|---|---|---|
+| **daily** | every day | yesterday |
+| **weekly** | **Mondays only** | the **last completed week** (Mon–Sun) |
+| **monthly** | **the 1st only** | the **previous calendar month** |
+
+So the Monday run reports *last week* and the 1st-of-month run reports *last
+month* — the windows are calendar-aligned and always cover a **completed**
+period. `--type auto` enforces this automatically; any other `--type` is a
+manual trigger.
+
+### 3.2 Manual trigger (for testing)
+
+Explicitly naming a type **bypasses the schedule and forces the push** (Lark +
+email), so you can test any report at any time:
+
+```bash
+python scripts/run_weekly.py --type weekly     # force last week's report now
+python scripts/run_weekly.py --type monthly    # force last month's report now
+python scripts/run_weekly.py --type daily      # force yesterday's report
+python scripts/run_weekly.py --type all        # force all three
+python scripts/run_all.py                      # everything incl. competitor
+```
+
+**Push cadence follows the report name**: the competitor report always pushes
+**daily**; the competitor email is always a separate message, never bundled with
+the data-report emails.
+
 
 
 ---

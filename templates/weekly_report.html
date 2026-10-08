@@ -61,7 +61,7 @@
     {% for m in cards %}
     <div class="stat">
       <div class="label">{{ m.metric_label }}</div>
-      <div class="value">{{ m.metric_value }}<small>{{ m.metric_unit or '' }}</small></div>
+      <div class="value">{{ m.metric_value|num }}<small>{{ m.metric_unit or '' }}</small></div>
       {% if m.change_pct is not none %}
       <div class="chg {{ 'up' if m.change_pct >= 0 else 'down' }}">较上期 {{ '%+.1f'|format(m.change_pct) }}%</div>
       {% endif %}
@@ -69,26 +69,19 @@
     {% endfor %}
   </div>
 
-  {% if executive_summary %}
-  <h2>执行摘要</h2>
-  <div class="panel">
-    {% for line in executive_summary.split('\n') %}{% if line.strip() %}<p>{{ line.strip() }}</p>{% endif %}{% endfor %}
-  </div>
-  {% endif %}
-
-  {% if dimension_insights %}
+  {% if dimension_highlights %}
   <h2>分维度解读</h2>
   <div class="dimgrid">
-    {% for d in dimension_insights %}
+    {% for d in dimension_highlights %}
     <div class="dimcard">
       <div class="dtitle">{{ d.dimension }}</div>
-      <div class="dtext">{{ d.insight }}</div>
+      <div class="dtext">{{ d.highlight }}</div>
     </div>
     {% endfor %}
   </div>
   {% endif %}
 
-  <h2>各维度明细指标</h2>
+  <h2>各维度明细指标 <span style="font-size:12px;color:var(--muted);font-weight:400">（核心指标见上方卡片，此处不重复）</span></h2>
   {% for dim in dimensions %}
     {% set items = metrics_by_dim.get(dim, []) %}
     {% if items %}
@@ -100,7 +93,7 @@
         {% for m in items %}
           <tr>
             <td>{{ m.metric_label }}</td>
-            <td>{{ m.metric_value }}{{ m.metric_unit or '' }}</td>
+            <td>{{ m.metric_value|num }}{{ m.metric_unit or '' }}</td>
             <td class="{{ 'up' if (m.change_pct or 0) >= 0 else 'down' }}">
               {% if m.change_pct is not none %}{{ '%+.1f'|format(m.change_pct) }}%{% else %}—{% endif %}
             </td>
@@ -111,6 +104,7 @@
       </table>
     </div>
     {% endif %}
+  {% endfor %}
 
   {% if gainers or losers %}
   <h2>市场涨跌榜（近 24h，按成交额过滤）</h2>
@@ -145,10 +139,10 @@
   <div class="panel anomaly"><ul>{% for a in anomalies %}<li>{{ a }}</li>{% endfor %}</ul></div>
   {% endif %}
 
-  {% if hypotheses %}
-  <h2>可能原因假设</h2>
+  {% if analysis %}
+  <h2>原因分析</h2>
   <div class="panel">
-    {% for line in hypotheses.split('\n') %}{% if line.strip() %}<p>{{ line.strip() }}</p>{% endif %}{% endfor %}
+    {% for line in analysis.split('\n') %}{% if line.strip() %}<p>{{ line.strip() }}</p>{% endif %}{% endfor %}
   </div>
   {% endif %}
 
@@ -169,5 +163,3 @@
 </div>
 </body>
 </html>
-
-  {% endfor %}

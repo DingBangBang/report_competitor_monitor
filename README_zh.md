@@ -50,13 +50,39 @@ open reports/weekly_report_*.html
 
 | 命令 | 说明 |
 |---|---|
-| `python -m src.pipeline report --type auto` | 每日都跑日报；周一加跑周报；每月 1 号加跑月报 |
-| `python -m src.pipeline report --type all` | 强制生成 日/周/月 三种 |
-| `python -m src.pipeline competitor` | 抓取 → 归因 → 报告（每日） |
-| `python -m src.pipeline all` | 首次全量运行 |
-| `python scripts/run_*.py` | 对应封装脚本 |
+| `python -m src.pipeline report --type auto` | 按日程自动：每日跑日报；**周一**跑周报；**每月 1 号**跑月报 |
+| `python -m src.pipeline report --type daily` | **手动触发**：强制生成日报 |
+| `python -m src.pipeline report --type weekly` | **手动触发**：强制生成周报 |
+| `python -m src.pipeline report --type monthly` | **手动触发**：强制生成月报 |
+| `python -m src.pipeline report --type all` | **手动触发**：强制生成 日/周/月 三种 |
+| `python -m src.pipeline all` | 首次全量运行（三种报告 + 竞品） |
+| `python scripts/run_weekly.py --type weekly` | 封装脚本（`--type` 原样透传） |
+| `python scripts/run_competitor.py` | 竞品管道封装 |
 
-**推送频率依据报告名字**：日报每天、周报周一、月报每月 1 号；竞品报告每天推送。邮件同频，且竞品报告单独成信，不与数据报告合并。
+### 3.1 频率（哪种报告什么时候发）
+
+| 报告 | 发送时间 | 统计口径 |
+|---|---|---|
+| **日报** | 每天 | 昨天 |
+| **周报** | **仅周一** | **上一个完整自然周**（周一~周日） |
+| **月报** | **仅每月 1 号** | **上一个自然月** |
+
+即：周一发的是「上周」的周报、每月 1 号发的是「上月」的月报，口径按自然周期对齐，始终覆盖**已结束**的完整周期。`--type auto` 会自动遵守；其他 `--type` 即手动触发。
+
+### 3.2 手动触发（测试用）
+
+显式指定类型会**跳过日程判断、并强制推送**（Lark + 邮件），随时可测：
+
+```bash
+python scripts/run_weekly.py --type weekly     # 立即生成「上周」周报
+python scripts/run_weekly.py --type monthly    # 立即生成「上月」月报
+python scripts/run_weekly.py --type daily      # 立即生成昨日日报
+python scripts/run_weekly.py --type all        # 强制三种
+python scripts/run_all.py                      # 三种 + 竞品全量
+```
+
+**推送频率依据报告名字**：竞品报告每天推送，且竞品邮件始终单独成信，不与数据报告合并。
+
 
 ---
 

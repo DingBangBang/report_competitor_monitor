@@ -111,3 +111,41 @@ Binance exposes market data but not internal KPIs (VIP tiering, Earn inflows,
 registrations). `weekly_data_fetcher._simulated_internal` generates them with a
 **period-seeded** `random.Random` so values are stable for a given period and
 reproducible. Swapping in real SQL is a single-method change.
+
+## 8. Calendar-aligned reporting windows
+
+Rolling windows made the Monday report cover "the last 7 days ending today",
+which is not what "last week" means to stakeholders. `_period_range()` now
+aligns to **completed calendar periods**:
+
+| Report | Window | Rationale |
+|---|---|---|
+| daily | yesterday | a full day of data |
+| weekly | last completed Mon–Sun | Monday's run reports the week that just closed |
+| monthly | previous calendar month | the 1st-of-month run reports last month |
+
+Any `--type` other than `auto` is treated as a **manual trigger** and forces
+generation + push, so reports can be tested at any time.
+
+## 9. Anti-duplication design (report content)
+
+The first LLM version repeated the same numbers and near-identical sentences
+across four blocks (headline → cards → executive summary → dimension insights →
+tables). Three changes removed it:
+
+1. **Separate data from interpretation.** Cards + tables carry the *numbers*;
+   the narrative carries only *judgement*. The `executive_summary` block was
+   deleted as pure restatement.
+2. **Consume each metric once.** In the fallback narrator, metrics are ranked by
+   |change| and each narrative field claims a *distinct* metric via a `used` set,
+   so no data point is cited twice. The LLM prompt now forbids repetition and
+   cross-field reuse of a value; `_dedupe_narrative()` additionally drops any
+   highlight/anomaly whose value token already appeared in the headline.
+3. **No summary/detail overlap.** The dimension tables exclude the six metrics
+   already shown in the cards (annotated "核心指标见上方卡片"), so every number
+   appears exactly once in the report body.
+
+The competitor report applies the same principle: `top_three` is now a concise
+one-line judgement (≤30 chars, not the raw announcement title), and the bottom
+provenance table lists exchange/category/time/URL without repeating titles.
+

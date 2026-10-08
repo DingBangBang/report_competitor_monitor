@@ -33,22 +33,29 @@ DIMENSION_LABELS = {
 }
 
 SCHEMA_INSTRUCTION = """你是资深加密交易所数据分析师。请严格基于给定数据，输出**唯一一个 JSON 对象**，不要任何多余文字或代码块标记。
+
+你的任务是「解读」而非「复述」。报告正文已经用指标卡片和表格完整列出了所有数值，因此必须遵守：
+1. 严禁在正文中重新罗列指标清单，严禁重复卡片/表格里已出现的数值堆砌；
+2. 每个字段只承载一类信息，字段之间不得重复同一句话或同一个数据点；
+3. 必须引用数值时要服务于判断，且同一个数值全篇最多出现一次；
+4. 不要写「本报告将分析…」「综上所述」这类空话与套话，直接给判断；
+5. headline 与 dimension_highlights、anomalies 之间不得引用同一个指标或同一个数值。
+
 JSON schema：
 {
-  "headline": "一句话核心结论，包含至少两个具体数值与环比方向",
-  "executive_summary": "执行摘要（3-5句，markdown），覆盖交易/资金/用户/市场四个维度的总体判断",
-  "dimension_insights": [
-    {"dimension": "交易维度", "insight": "该维度一句话解读，引用具体数值与环比"},
-    {"dimension": "资金维度", "insight": "..."},
-    {"dimension": "用户维度", "insight": "..."},
-    {"dimension": "市场维度", "insight": "..."}
+  "headline": "一句话核心结论（≤60字）：本期最重要的变化及其业务含义",
+  "dimension_highlights": [
+    {"dimension": "交易维度", "highlight": "该维度的一句话解读：变化 + 驱动/含义（≤50字）"},
+    {"dimension": "资金维度", "highlight": "..."},
+    {"dimension": "用户维度", "highlight": "..."},
+    {"dimension": "市场维度", "highlight": "..."}
   ],
-  "anomalies": ["异常点（含数值与偏离幅度，如：Earn净流入环比 -32%，显著低于近月均值）"],
-  "hypotheses": "针对异常点的可能原因假设（markdown 段落，分点）",
-  "risks": ["潜在风险1", "潜在风险2"],
-  "next_steps": ["建议动作1", "建议动作2", "建议动作3", "建议动作4"]
+  "anomalies": ["只列真实显著异常（环比绝对值≥15%），每条一句话；没有异常就返回空数组 []"],
+  "analysis": "原因分析（markdown，2-4 段）：把变化串成因果链，说明可能的驱动因素与相互影响，不要罗列数字",
+  "risks": ["具体风险，每条一句话，不得与 analysis 内容重复"],
+  "next_steps": ["可执行的下一步动作，每条一句话，具体到做什么"]
 }
-要求：结论前置；四个维度都要覆盖；所有数字必须来自给定数据，不得编造；语气客观专业。"""
+四个维度都要覆盖；所有数字必须来自给定数据，不得编造。"""
 
 
 class WeeklyReportGenerator:
@@ -61,7 +68,8 @@ class WeeklyReportGenerator:
             loader=FileSystemLoader(str(Config.TEMPLATES_DIR)),
             autoescape=select_autoescape(["html", "xml"]),
         )
-
+        # Render 56600.0 as 56600 while keeping genuine decimals intact.
+        self.env.filters["num"] = _fmt_num
     # -- public API ----------------------------------------------------------
     def generate(self, report_type: str = "weekly") -> dict[str, Any]:
         report_type = report_type.lower()
@@ -74,7 +82,11 @@ class WeeklyReportGenerator:
         period_end = metrics[0]["period_end"] if metrics else datetime.now(timezone.utc).date().isoformat()
 
         extras = self.db.get_extras(report_type, period_end) if period_end else {}
-        metrics_by_dim, dimension_metrics = self._group_by_dimension(metrics)
+        cards = self._card_metrics(metrics)
+        card_keys = {m["metric_key"] for m in cards}
+        # The tables carry the *remaining* metrics so numbers are never shown twice.
+        rest = [m for m in metrics if m["metric_key"] not in card_keys]
+        metrics_by_dim, dimension_metrics = self._group_by_dimension(rest)
         narrative = self._generate_narrative(report_type, metrics)
 
         context = {
@@ -87,14 +99,13 @@ class WeeklyReportGenerator:
             "metrics_by_dim": metrics_by_dim,
             "dimensions": DIMENSION_ORDER,
             "dimension_labels": DIMENSION_LABELS,
-            "cards": self._card_metrics(metrics),
+            "cards": cards,
             "gainers": extras.get("top_gainers", []),
             "losers": extras.get("top_losers", []),
             "headline": narrative.get("headline", ""),
-            "executive_summary": narrative.get("executive_summary", ""),
-            "dimension_insights": narrative.get("dimension_insights", []),
+            "dimension_highlights": narrative.get("dimension_highlights", []),
             "anomalies": narrative.get("anomalies", []),
-            "hypotheses": narrative.get("hypotheses", ""),
+            "analysis": narrative.get("analysis", ""),
             "risks": narrative.get("risks", []),
             "next_steps": narrative.get("next_steps", []),
         }
@@ -133,10 +144,9 @@ class WeeklyReportGenerator:
         if not metrics:
             return {
                 "headline": "本期暂无可用数据。",
-                "executive_summary": "未采集到指标数据。",
-                "dimension_insights": [],
+                "dimension_highlights": [],
                 "anomalies": [],
-                "hypotheses": "",
+                "analysis": "",
                 "risks": [],
                 "next_steps": ["检查数据抓取管道是否正常运行。"],
             }
@@ -152,14 +162,58 @@ class WeeklyReportGenerator:
             parsed = LLMClient._safe_json(reply) if reply else None
             if parsed and parsed.get("headline"):
                 for k, default in (
-                    ("executive_summary", ""), ("dimension_insights", []),
-                    ("anomalies", []), ("hypotheses", ""), ("risks", []), ("next_steps", []),
+                    ("dimension_highlights", []), ("anomalies", []),
+                    ("analysis", ""), ("risks", []), ("next_steps", []),
                 ):
                     parsed.setdefault(k, default)
-                return parsed
+                return self._dedupe_narrative(parsed)
             logger.warning("LLM narrative unavailable/invalid; using deterministic fallback.")
 
         return self._fallback_narrative(report_type, metrics)
+
+    @staticmethod
+    def _dedupe_narrative(n: dict[str, Any]) -> dict[str, Any]:
+        """Guard against any residual repetition in the model's output."""
+        import re
+
+        def _values(text: Any) -> set[str]:
+            """Value-like numeric tokens (decimals or >=100), skipping labels like '7日'."""
+            return set(re.findall(r"\d+\.\d+|\d{3,}", str(text)))
+
+        seen: set[str] = set()
+
+        def unique_list(items: Any) -> list[str]:
+            out: list[str] = []
+            for it in items or []:
+                text = it if isinstance(it, str) else (it.get("highlight") or it.get("insight") or "")
+                key = " ".join(str(text).split()).lower()
+                if text and key not in seen:
+                    seen.add(key)
+                    out.append(it)
+            return out
+
+        headline_vals = _values(n.get("headline", ""))
+
+        def not_in_headline(items: Any) -> list[str]:
+            out: list[str] = []
+            for it in items or []:
+                text = it if isinstance(it, str) else (it.get("highlight") or it.get("insight") or "")
+                if _values(text) & headline_vals:
+                    continue  # already quantified in the headline
+                out.append(it)
+            return out
+
+        n["anomalies"] = not_in_headline(unique_list(n.get("anomalies")))
+        n["risks"] = unique_list(n.get("risks"))
+        n["next_steps"] = unique_list(n.get("next_steps"))
+
+        # A dimension highlight must not repeat the headline's figures, nor an anomaly line.
+        anomaly_keys = {" ".join(str(a).split()).lower() for a in n["anomalies"]}
+        n["dimension_highlights"] = [
+            d for d in not_in_headline(n.get("dimension_highlights") or [])
+            if " ".join(str(d.get("highlight", "")).split()).lower() not in anomaly_keys
+        ]
+        return n
 
     @staticmethod
     def _metrics_to_text(report_type: str, metrics: list[dict[str, Any]]) -> str:
@@ -178,85 +232,101 @@ class WeeklyReportGenerator:
         label = REPORT_LABELS.get(report_type, "本期")
         by_key = {m["metric_key"]: m for m in metrics}
 
-        def fmt(key: str) -> str:
-            m = by_key.get(key)
-            if not m:
-                return "暂无数据"
+        # Rank every metric once; each narrative field then consumes a *distinct*
+        # metric so the same data point never appears twice in the prose.
+        ranked = sorted(metrics, key=lambda m: abs(m.get("change_pct") or 0), reverse=True)
+        used: set[str] = set()
+
+        # 1) Headline — the single most significant mover this period.
+        lead = ranked[0] if ranked else None
+        if lead:
+            used.add(lead["metric_key"])
+            flow = _val(by_key, "fund_net_flow")
+            flow_txt = "资金面呈净流入" if (flow or 0) >= 0 else "资金面呈净流出"
+            headline = f"{lead['metric_label']}环比{_chg_txt(lead)}，为{label}最显著变化，{flow_txt}。"
+        else:
+            headline = f"本{label}暂无可用数据。"
+
+        # 2) Anomalies — genuine outliers only, excluding what the headline used.
+        anomalies: list[str] = []
+        for m in ranked:
             chg = m.get("change_pct")
-            direction = "增长" if (chg or 0) >= 0 else "下降"
-            chg_txt = f"较上期{direction}{abs(chg):.1f}%" if chg is not None else "无环比数据"
-            return f"{m['metric_label']} {m['metric_value']}{m.get('metric_unit','')}，{chg_txt}"
+            if chg is not None and abs(chg) >= 15 and m["metric_key"] not in used:
+                used.add(m["metric_key"])
+                anomalies.append(f"{m['metric_label']}偏离显著（{chg:+.1f}%），需重点关注。")
+            if len(anomalies) >= 4:
+                break
 
-        def val(key: str, default: str = "N/A") -> str:
-            m = by_key.get(key)
-            return f"{m['metric_value']}{m.get('metric_unit','')}" if m else default
-
-        headline = (
-            f"本{label}合约交易量 {val('contract_volume')}（{_chg_txt(by_key.get('contract_volume'))}），"
-            f"现货交易量 {val('spot_volume')}（{_chg_txt(by_key.get('spot_volume'))}），"
-            f"资金净流入 {val('fund_net_flow')}（{_chg_txt(by_key.get('fund_net_flow'))}）。"
-        )
-
-        # Executive summary across the four dimensions.
-        exec_parts = [
-            f"交易端：{fmt('contract_volume')}；{fmt('spot_volume')}；活跃交易对 {by_key.get('active_pairs',{}).get('metric_value','N/A')} 个。",
-            f"资金端：净流入 {by_key.get('fund_net_flow',{}).get('metric_value','N/A')}$亿，Earn 净流入 {by_key.get('earn_net_inflow',{}).get('metric_value','N/A')}$M，稳定币储备 {by_key.get('stablecoin_reserve',{}).get('metric_value','N/A')}$亿。",
-            f"用户端：新增注册 {by_key.get('new_registrations',{}).get('metric_value','N/A')} 人，日活 {by_key.get('active_users',{}).get('metric_value','N/A')} 万人，VIP 净变动 {by_key.get('vip_user_change',{}).get('metric_value','N/A')} 人。",
-            f"市场端：BTC {by_key.get('btc_price',{}).get('metric_value','N/A')}$（{_chg_txt(by_key.get('btc_change_pct'))}），上涨币种占比 {by_key.get('market_breadth',{}).get('metric_value','N/A')}%。",
-        ]
-
-        # Per-dimension one-line insights.
-        dimension_insights = []
+        # 3) Per-dimension highlight — top mover *within* each dimension, still
+        #    excluding anything already mentioned above.
+        dimension_highlights: list[dict[str, str]] = []
         for dim in DIMENSION_ORDER:
-            items = [m for m in metrics if (m.get("dimension") or "other") == dim]
+            items = [
+                m for m in metrics
+                if (m.get("dimension") or "other") == dim and m["metric_key"] not in used
+            ]
             if not items:
                 continue
-            # pick the metric with the largest absolute change for the headline of the dimension.
-            lead = max(items, key=lambda m: abs(m.get("change_pct") or 0))
-            dimension_insights.append({
+            top = max(items, key=lambda m: abs(m.get("change_pct") or 0))
+            used.add(top["metric_key"])
+            direction = "上行" if (top.get("change_pct") or 0) >= 0 else "回落"
+            dimension_highlights.append({
                 "dimension": DIMENSION_LABELS.get(dim, dim),
-                "insight": f"{DIMENSION_LABELS.get(dim, dim)}：主线指标 {fmt(lead['metric_key'])}；"
-                           f"波动最大项为 {lead['metric_label']}（{_chg_txt(lead)}）。",
+                "highlight": f"{DIMENSION_LABELS.get(dim, dim)}{direction}，主要由{top['metric_label']}带动。",
             })
 
-        anomalies = []
-        for m in metrics:
-            chg = m.get("change_pct")
-            if chg is not None and abs(chg) >= 15:
-                anomalies.append(
-                    f"{m['metric_label']}出现显著波动（{chg:+.1f}%），当前值 {m['metric_value']}{m.get('metric_unit','')}。"
-                )
-        if not anomalies:
-            anomalies.append("本期各核心指标波动均在 ±15% 的正常区间内，无显著异常。")
-
-        hypotheses = (
-            "可能原因假设：\n"
-            "- 交易量波动多与大盘行情及衍生品资金费率变化相关；\n"
-            "- 资金净流入/流出与 Earn 收益率、竞品上币及费率调整存在相关性；\n"
-            "- 用户指标变化受活动投放节奏与竞品挖矿活动分流影响。\n"
-            "建议结合竞品动态报告交叉验证。"
+        breadth = _val(by_key, "market_breadth")
+        breadth_txt = (
+            "市场上涨币种占比偏低，资金集中在少数主流币种，行情广度不足。"
+            if (breadth or 100) < 45
+            else "市场上涨币种占比较高，行情具备一定广度。"
+        )
+        analysis = (
+            "本期的核心变化集中在交易与资金两条主线：交易量的变动通常先由大盘行情与衍生品资金费率"
+            "驱动，再传导至现货深度；资金面方向与交易活跃度方向的一致性，说明驱动力更多来自资金迁移"
+            "而非单纯的价格波动。" + breadth_txt +
+            "用户侧的新增与留存属于滞后指标，其变化需要在后续周期中确认，暂不足以判断趋势拐点。"
         )
 
         risks = [
-            "若资金净流入持续为负，需警惕流动性外流与做市深度下降。",
-            "竞品上币/费率调整可能持续分流 VIP 与高净值用户。",
-            "稳定币储备若下降，将削弱大额交易的承接能力。",
+            "资金面若持续净流出，可能削弱做市深度并推高用户交易成本。",
+            "竞品在上币与费率上的主动调整，可能持续分流高净值与 VIP 用户。",
+            "市场广度不足时，行情依赖少数主流币种，波动放大风险上升。",
         ]
         next_steps = [
-            "对波动最大的 2-3 个指标下钻到币种/用户分层维度定位原因。",
-            "跟踪竞品本周上币与费率变化，评估我方跟进策略。",
-            "优化 Earn 产品收益率与 VIP 权益以稳定净流入。",
-            "监控稳定币储备与做市深度，必要时启动流动性补充预案。",
+            "对资金面异动下钻到币种与做市商维度，定位净流出的具体来源。",
+            "跟踪竞品本期的上币与费率变化，评估是否需要跟进调整。",
+            "优化 Earn 收益率与 VIP 权益结构，稳定高净值用户留存。",
+            "在行情广度收窄时加强流动性监控，必要时启动做市补充预案。",
         ]
         return {
             "headline": headline,
-            "executive_summary": "\n".join(exec_parts),
-            "dimension_insights": dimension_insights,
+            "dimension_highlights": dimension_highlights,
             "anomalies": anomalies,
-            "hypotheses": hypotheses,
+            "analysis": analysis,
             "risks": risks,
             "next_steps": next_steps,
         }
+
+
+def _val(by_key: dict[str, Any], key: str) -> float | None:
+    m = by_key.get(key)
+    return m.get("metric_value") if m else None
+
+
+def _fmt_value(m: dict[str, Any] | None) -> str:
+    if not m:
+        return ""
+    return _fmt_num(m.get("metric_value"))
+
+
+def _fmt_num(v: Any) -> str:
+    """Format a raw number: 56600.0 -> "56600", 4225.2 -> "4225.2"."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return str(v)
+    return str(int(f)) if f.is_integer() else f"{f:g}"
 
 
 def _chg_txt(m: dict[str, Any] | None) -> str:

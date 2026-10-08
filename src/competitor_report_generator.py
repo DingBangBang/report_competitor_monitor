@@ -17,6 +17,7 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from src.analyzer_labels import CATEGORY_LABELS, GROUP_ORDER, LEVEL_LABELS
+from src.competitor_fetcher import SYMBOL_STOPWORDS
 from src.config import Config
 from src.database import Database
 from src.llm_client import LLMClient
@@ -25,12 +26,15 @@ logger = logging.getLogger(__name__)
 
 SCHEMA_INSTRUCTION = """你是加密交易所竞品情报主管。基于给定的竞品事件列表，输出**唯一一个 JSON 对象**：
 {
-  "top_three": ["本周最需关注的第一件事（含交易所与影响）", "第二件事", "第三件事"],
-  "overview": "本周事件概览（markdown 段落）",
-  "impact_logic": "影响评估逻辑说明（markdown 段落）",
+  "top_three": [
+    "第1件：≤30字，点明交易所 + 事件 + 为什么重要，禁止直接照抄公告标题",
+    "第2件：同样风格", "第3件：同样风格"
+  ],
+  "overview": "本周事件概览（markdown 段落，1-2 段，按交易所/类型归纳趋势，不要逐条复述下方列表）",
+  "impact_logic": "影响评估逻辑说明（markdown 段落，说明分类依据）",
   "history_compare": "与历史的对比（markdown 段落，若无历史数据请说明）"
 }
-要求：结论前置；top_three 恰好三条；所有内容基于给定事件，不得编造。"""
+要求：结论前置；top_three 恰好三条且互不重复；所有内容基于给定事件，不得编造；禁止与报告下方的事件明细逐字重复。"""
 
 
 class CompetitorReportGenerator:
@@ -93,7 +97,7 @@ class CompetitorReportGenerator:
 
         for ev in events:
             for sym in ev.get("symbols") or []:
-                if 2 <= len(sym) <= 10:
+                if 2 <= len(sym) <= 10 and sym not in SYMBOL_STOPWORDS:
                     symbol_counts[sym] += 1
             category_counts[ev.get("category", "activity")] += 1
             exchange_counts[ev.get("exchange", "Unknown")] += 1
@@ -150,9 +154,13 @@ class CompetitorReportGenerator:
     def _fallback_narrative(events, groups) -> dict[str, Any]:
         immediate = groups.get("immediate", [])
         ordered = immediate + groups.get("confirm", []) + groups.get("management_align", [])
-        top_three = []
+        top_three: list[str] = []
         for ev in ordered[:3]:
-            top_three.append(f"{ev.get('exchange')}：{ev.get('title')}")
+            cat = CATEGORY_LABELS.get(ev.get("category", ""), "动态")
+            syms = "、".join((ev.get("symbols") or [])[:3])
+            label = f"{ev.get('exchange')} {cat}" + (f"（{syms}）" if syms else "")
+            reason = (ev.get("impact_reason") or "").strip()
+            top_three.append(f"{label}：{reason}" if reason else label)
         while len(top_three) < 3:
             top_three.append("本周暂无更高优先级事件。")
 
